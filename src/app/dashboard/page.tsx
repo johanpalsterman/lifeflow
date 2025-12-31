@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { 
-  Calendar, CheckCircle2, Mail, Package, CreditCard, Gift, Shield, 
+import {
+  Calendar, CheckCircle2, Mail, Package, CreditCard, Gift, Shield,
   Sparkles, Brain, Lightbulb, Settings, Bell, Search, Car,
-  TrendingUp, TrendingDown, AlertCircle, MessageSquare, Loader2, Circle, X, Flag, Plus
+  TrendingUp, TrendingDown, AlertCircle, MessageSquare, Loader2, Circle, X, Flag, Plus, RefreshCw
 } from 'lucide-react';
 
 interface Task {
@@ -46,6 +46,11 @@ interface DashboardData {
     openTasks: number;
     activePackages: number;
   };
+  financial: {
+    toReceive: number;
+    toPay: number;
+    overdue: number;
+  };
   eventsToday: Event[];
   tasks: Task[];
   packages: any[];
@@ -53,10 +58,22 @@ interface DashboardData {
   safetyChecks: SafetyCheck[];
 }
 
+interface EmailData {
+  connected: boolean;
+  unreadCount: number;
+  emails: Array<{
+    id: string;
+    from: string;
+    subject: string;
+    time: string;
+    important: boolean;
+  }>;
+}
+
 // AddTaskModal Component
-function AddTaskModal({ isOpen, onClose, onAdd }: { 
-  isOpen: boolean; 
-  onClose: () => void; 
+function AddTaskModal({ isOpen, onClose, onAdd }: {
+  isOpen: boolean;
+  onClose: () => void;
   onAdd: (task: { title: string; priority: string; dueDate: string | null }) => Promise<void>;
 }) {
   const [title, setTitle] = useState('');
@@ -119,7 +136,7 @@ function AddTaskModal({ isOpen, onClose, onAdd }: {
                   type="button"
                   onClick={() => setPriority(p.value)}
                   className={`flex-1 px-3 py-2 rounded-lg border transition-all flex flex-col items-center ${
-                    priority === p.value 
+                    priority === p.value
                       ? `${p.activeColor} ring-2 ring-offset-2 ring-offset-[#12121a]`
                       : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
                   }`}
@@ -301,14 +318,16 @@ function AddEventModal({ isOpen, onClose, onAdd }: {
 export default function DashboardPage() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [data, setData] = useState<DashboardData | null>(null);
+  const [emailData, setEmailData] = useState<EmailData>({ connected: false, unreadCount: 0, emails: [] });
   const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddEvent, setShowAddEvent] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch('/api/dashboard/summary?userId=demo-user');
+      const res = await fetch('/api/dashboard/summary');
       const json = await res.json();
       if (json.success) {
         setData(json.data);
@@ -323,11 +342,44 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const fetchEmails = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gmail');
+      const json = await res.json();
+      if (json.success) {
+        setEmailData(json.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch emails:', err);
+    }
+  }, []);
+
+  const processEmails = async () => {
+    setProcessing(true);
+    try {
+      const res = await fetch('/api/process-emails', { method: 'POST' });
+      const json = await res.json();
+      if (json.success) {
+        // Refresh data after processing
+        await fetchData();
+        await fetchEmails();
+      }
+    } catch (err) {
+      console.error('Failed to process emails:', err);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
-    const dataInterval = setInterval(fetchData, 30000);
+    fetchEmails();
+    const dataInterval = setInterval(() => {
+      fetchData();
+      fetchEmails();
+    }, 60000); // Refresh every minute
     return () => clearInterval(dataInterval);
-  }, [fetchData]);
+  }, [fetchData, fetchEmails]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
@@ -368,7 +420,7 @@ export default function DashboardPage() {
 
   const formatTime = (d: Date) => d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
   const formatDate = (d: Date) => d.toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' });
-  
+
   const getGreeting = () => {
     const hour = currentTime.getHours();
     if (hour < 12) return 'Goedemorgen';
@@ -421,6 +473,10 @@ export default function DashboardPage() {
     }
   };
 
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(amount);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">
@@ -471,7 +527,9 @@ export default function DashboardPage() {
               <button className="p-2 rounded-lg hover:bg-white/5"><Search className="w-5 h-5 text-slate-400" /></button>
               <button className="p-2 rounded-lg hover:bg-white/5 relative">
                 <Bell className="w-5 h-5 text-slate-400" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full" />
+                {emailData.unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full" />
+                )}
               </button>
               <Link href="/settings" className="p-2 rounded-lg hover:bg-white/5"><Settings className="w-5 h-5 text-slate-400" /></Link>
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-violet-500 flex items-center justify-center text-sm font-bold ml-2">J</div>
@@ -500,7 +558,7 @@ export default function DashboardPage() {
           {[
             { label: 'Events vandaag', value: data?.stats.eventsToday ?? 0, icon: Calendar, color: 'blue' },
             { label: 'Open taken', value: data?.stats.openTasks ?? 0, icon: CheckCircle2, color: 'emerald' },
-            { label: 'Ongelezen', value: 12, icon: Mail, color: 'violet' },
+            { label: 'Ongelezen', value: emailData.unreadCount, icon: Mail, color: 'violet' },
             { label: 'Leveringen', value: data?.stats.activePackages ?? 0, icon: Package, color: 'amber' },
           ].map((stat) => (
             <div key={stat.label} className="group p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all cursor-pointer">
@@ -603,21 +661,21 @@ export default function DashboardPage() {
                     <TrendingUp className="w-4 h-4 text-emerald-400" />
                     <span className="text-sm text-emerald-400">Te ontvangen</span>
                   </div>
-                  <p className="text-2xl font-semibold text-emerald-300">€3.500</p>
+                  <p className="text-2xl font-semibold text-emerald-300">{formatCurrency(data?.financial?.toReceive ?? 0)}</p>
                 </div>
                 <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20">
                   <div className="flex items-center gap-2 mb-1">
                     <TrendingDown className="w-4 h-4 text-rose-400" />
                     <span className="text-sm text-rose-400">Te betalen</span>
                   </div>
-                  <p className="text-2xl font-semibold text-rose-300">€1.240</p>
+                  <p className="text-2xl font-semibold text-rose-300">{formatCurrency(data?.financial?.toPay ?? 0)}</p>
                 </div>
                 <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
                   <div className="flex items-center gap-2 mb-1">
                     <AlertCircle className="w-4 h-4 text-amber-400" />
                     <span className="text-sm text-amber-400">Overdue</span>
                   </div>
-                  <p className="text-2xl font-semibold text-amber-300">1</p>
+                  <p className="text-2xl font-semibold text-amber-300">{data?.financial?.overdue ?? 0}</p>
                 </div>
               </div>
             </div>
@@ -631,24 +689,45 @@ export default function DashboardPage() {
                 <h3 className="font-medium flex items-center gap-2">
                   <Mail className="w-4 h-4 text-cyan-400" /> Inbox
                 </h3>
-                <span className="px-2 py-0.5 text-xs rounded-full bg-cyan-500/20 text-cyan-400">12 nieuw</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={processEmails}
+                    disabled={processing}
+                    className="p-1.5 rounded-lg hover:bg-white/5 text-slate-400 hover:text-white disabled:opacity-50"
+                    title="Verwerk emails met AI"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${processing ? 'animate-spin' : ''}`} />
+                  </button>
+                  {emailData.unreadCount > 0 && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-cyan-500/20 text-cyan-400">
+                      {emailData.unreadCount} nieuw
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="space-y-2">
-                {[
-                  { from: 'PostNL', subject: 'Pakket wordt vandaag bezorgd', time: '10 min', icon: Package, important: true },
-                  { from: 'Marie', subject: 'Nog steeds op voor zaterdag?', time: '25 min', icon: MessageSquare },
-                  { from: 'KBC Bank', subject: 'Nieuwe factuur beschikbaar', time: '1 uur', icon: Mail, important: true },
-                ].map((msg, i) => (
-                  <div key={i} className="p-3 rounded-xl hover:bg-white/[0.02] transition-colors cursor-pointer">
-                    <div className="flex items-center gap-2 mb-1">
-                      <msg.icon className="w-3 h-3 text-slate-500" />
-                      <span className="text-sm font-medium">{msg.from}</span>
-                      {msg.important && <span className="w-2 h-2 bg-amber-400 rounded-full" />}
-                      <span className="text-xs text-slate-600 ml-auto">{msg.time}</span>
+                {emailData.connected && emailData.emails.length > 0 ? (
+                  emailData.emails.map((email) => (
+                    <div key={email.id} className="p-3 rounded-xl hover:bg-white/[0.02] transition-colors cursor-pointer">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Mail className="w-3 h-3 text-slate-500" />
+                        <span className="text-sm font-medium">{email.from}</span>
+                        {email.important && <span className="w-2 h-2 bg-amber-400 rounded-full" />}
+                        <span className="text-xs text-slate-600 ml-auto">{email.time}</span>
+                      </div>
+                      <p className="text-sm text-slate-400 truncate">{email.subject}</p>
                     </div>
-                    <p className="text-sm text-slate-400 truncate">{msg.subject}</p>
+                  ))
+                ) : emailData.connected ? (
+                  <p className="text-slate-500 text-sm">Geen ongelezen emails</p>
+                ) : (
+                  <div className="text-center py-4">
+                    <p className="text-slate-500 text-sm mb-2">Gmail niet verbonden</p>
+                    <Link href="/settings" className="text-sm text-blue-400 hover:text-blue-300">
+                      Verbind in Settings →
+                    </Link>
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
@@ -745,8 +824,17 @@ export default function DashboardPage() {
       </main>
 
       {/* Floating AI Button */}
-      <button className="fixed bottom-8 right-8 w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-violet-500/25 hover:scale-105 transition-transform z-50">
-        <Sparkles className="w-6 h-6" />
+      <button
+        onClick={processEmails}
+        disabled={processing}
+        className="fixed bottom-8 right-8 w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-violet-500/25 hover:scale-105 transition-transform z-50 disabled:opacity-50"
+        title="Verwerk emails met AI"
+      >
+        {processing ? (
+          <Loader2 className="w-6 h-6 animate-spin" />
+        ) : (
+          <Sparkles className="w-6 h-6" />
+        )}
       </button>
     </div>
   );
