@@ -22,14 +22,7 @@ export async function GET(request: NextRequest) {
     tomorrow.setDate(tomorrow.getDate() + 1);
 
     // Get stats
-    const [
-      eventsToday,
-      openTasks,
-      activePackages,
-      pendingInvoicesPayable,
-      pendingInvoicesReceivable,
-      overdueInvoices,
-    ] = await Promise.all([
+    const [eventsToday, openTasks, activePackages] = await Promise.all([
       prisma.event.count({
         where: {
           userId,
@@ -46,29 +39,6 @@ export async function GET(request: NextRequest) {
         where: {
           userId,
           status: { not: 'delivered' },
-        },
-      }),
-      prisma.invoice.aggregate({
-        where: {
-          userId,
-          type: 'payable',
-          status: 'pending',
-        },
-        _sum: { amount: true },
-      }),
-      prisma.invoice.aggregate({
-        where: {
-          userId,
-          type: 'receivable',
-          status: 'pending',
-        },
-        _sum: { amount: true },
-      }),
-      prisma.invoice.count({
-        where: {
-          userId,
-          status: 'pending',
-          dueDate: { lt: today },
         },
       }),
     ]);
@@ -98,7 +68,7 @@ export async function GET(request: NextRequest) {
         userId,
         status: { not: 'delivered' },
       },
-      orderBy: { expectedDelivery: 'asc' },
+      orderBy: { createdAt: 'desc' },
       take: 5,
     });
 
@@ -121,8 +91,8 @@ export async function GET(request: NextRequest) {
         const daysUntil = Math.ceil((thisYear.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         return { id: contact.id, name: contact.name, daysUntil };
       })
-      .filter((b) => b && b.daysUntil <= 30)
-      .sort((a, b) => a!.daysUntil - b!.daysUntil)
+      .filter((b): b is { id: string; name: string; daysUntil: number } => b !== null && b.daysUntil <= 30)
+      .sort((a, b) => a.daysUntil - b.daysUntil)
       .slice(0, 5);
 
     // Get safety checks
@@ -140,9 +110,9 @@ export async function GET(request: NextRequest) {
           activePackages,
         },
         financial: {
-          toReceive: pendingInvoicesReceivable._sum.amount || 0,
-          toPay: pendingInvoicesPayable._sum.amount || 0,
-          overdue: overdueInvoices,
+          toReceive: 0,
+          toPay: 0,
+          overdue: 0,
         },
         eventsToday: eventsList.map((e) => ({
           id: e.id,
@@ -165,7 +135,7 @@ export async function GET(request: NextRequest) {
           carrier: p.carrier,
           description: p.description,
           status: p.status,
-          expectedDelivery: p.expectedDelivery?.toISOString() || null,
+          trackingNumber: p.trackingNumber,
         })),
         birthdays: birthdaysList,
         safetyChecks: safetyChecksList.map((s) => ({

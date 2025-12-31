@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +16,6 @@ export async function POST() {
           id: userId,
           email: 'johan@lifeflow.demo',
           name: 'Johan',
-          timezone: 'Europe/Brussels',
-          locale: 'nl-BE',
-          onboardingCompleted: true,
         }
       });
     }
@@ -41,7 +38,14 @@ export async function POST() {
       await prisma.task.upsert({
         where: { id: t.id },
         update: {},
-        create: { id: t.id, userId, title: t.title, priority: t.priority, dueDate, status: 'pending', tags: [], reminderMinutes: [] }
+        create: { 
+          id: t.id, 
+          userId, 
+          title: t.title, 
+          priority: t.priority, 
+          dueDate, 
+          status: 'pending'
+        }
       });
     }
 
@@ -60,7 +64,16 @@ export async function POST() {
       await prisma.event.upsert({
         where: { id: e.id },
         update: {},
-        create: { id: e.id, userId, title: e.title, startTime, endTime, eventType: e.type, color: e.color, location: e.location || null, reminderMinutes: [15] }
+        create: { 
+          id: e.id, 
+          userId, 
+          title: e.title, 
+          startTime, 
+          endTime, 
+          eventType: e.type, 
+          color: e.color, 
+          location: e.location || null
+        }
       });
     }
 
@@ -76,7 +89,12 @@ export async function POST() {
       await prisma.contact.upsert({
         where: { id: c.id },
         update: {},
-        create: { id: c.id, userId, name: c.name, birthday, isFavorite: true }
+        create: { 
+          id: c.id, 
+          userId, 
+          name: c.name, 
+          birthday
+        }
       });
     }
 
@@ -92,7 +110,14 @@ export async function POST() {
       await prisma.safetyCheck.upsert({
         where: { id: s.id },
         update: {},
-        create: { id: s.id, userId, checkType: s.checkType, name: s.name, status: s.status, nextCheckAt, isEnabled: true, checkConfig: {} }
+        create: { 
+          id: s.id, 
+          userId, 
+          checkType: s.checkType, 
+          name: s.name, 
+          status: s.status, 
+          nextCheckAt
+        }
       });
     }
 

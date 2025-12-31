@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,13 +8,11 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const search = searchParams.get('search');
-    const favorites = searchParams.get('favorites') === 'true';
     const limit = parseInt(searchParams.get('limit') || '100');
     const offset = parseInt(searchParams.get('offset') || '0');
     const userId = searchParams.get('userId') || 'demo-user';
 
     const where: any = { userId };
-    if (favorites) where.isFavorite = true;
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
@@ -47,7 +45,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
     if (!body.name || body.name.trim() === '') {
       return NextResponse.json({ success: false, error: 'Name is required' }, { status: 400 });
     }
@@ -61,7 +59,8 @@ export async function POST(request: NextRequest) {
         email: body.email || null,
         phone: body.phone || null,
         birthday: body.birthday ? new Date(body.birthday) : null,
-        },
+        notes: body.notes || null,
+      },
     });
 
     return NextResponse.json({ success: true, data: contact }, { status: 201 });
@@ -70,6 +69,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Failed to create contact' }, { status: 500 });
   }
 }
-
-
-

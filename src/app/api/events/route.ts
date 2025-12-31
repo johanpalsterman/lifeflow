@@ -66,7 +66,6 @@ export async function POST(request: NextRequest) {
         location: body.location || null,
         startTime: new Date(body.startTime),
         endTime: body.endTime ? new Date(body.endTime) : null,
-        allDay: body.allDay || false,
         eventType: body.eventType || 'default',
         color: body.color || null,
         reminderMinutes: body.reminderMinutes || [],
@@ -82,3 +81,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+

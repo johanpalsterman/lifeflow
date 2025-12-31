@@ -68,7 +68,6 @@ export async function POST(request: NextRequest) {
         dueDate: body.dueDate ? new Date(body.dueDate) : null,
         priority: body.priority || 'medium',
         status: body.status || 'pending',
-        listName: body.listName || null,
         tags: body.tags || [],
         reminderMinutes: body.reminderMinutes || [],
       },
@@ -83,3 +82,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+
