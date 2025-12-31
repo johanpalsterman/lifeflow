@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     const [contacts, total] = await Promise.all([
       prisma.contact.findMany({
         where,
-        orderBy: [{ isFavorite: 'desc' }, { name: 'asc' }],
+        orderBy: { name: 'asc' },
         take: limit,
         skip: offset,
       }),
@@ -71,3 +71,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Failed to create contact' }, { status: 500 });
   }
 }
+
+
