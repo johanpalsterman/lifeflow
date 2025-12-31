@@ -1,0 +1,63 @@
+name: Deploy LifeFlow
+
+on:
+  # Manual trigger via GitHub UI
+  workflow_dispatch:
+  
+  # Webhook trigger via repository_dispatch
+  repository_dispatch:
+    types: [deploy-lifeflow]
+  
+  # Auto deploy on push to main
+  push:
+    branches:
+      - main
+
+env:
+  AZURE_CONTAINER_REGISTRY: lifeflowacr5207.azurecr.io
+  IMAGE_NAME: lifeflow
+  RESOURCE_GROUP: lifeflow-rg
+  CONTAINER_APP_NAME: lifeflow
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set version tag
+        id: version
+        run: echo "TAG=v$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.AZURE_CONTAINER_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.TAG }} .
+          docker build -t ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:latest .
+          docker push ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.TAG }}
+          docker push ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.TAG }}
+
+      - name: Output deployment info
+        run: |
+          echo "✅ Deployed version: ${{ steps.version.outputs.TAG }}"
+          echo "🌐 URL: https://lifeflow.wishflow.eu"
