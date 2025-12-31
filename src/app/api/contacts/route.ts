@@ -61,8 +61,7 @@ export async function POST(request: NextRequest) {
         email: body.email || null,
         phone: body.phone || null,
         birthday: body.birthday ? new Date(body.birthday) : null,
-        isFavorite: body.isFavorite || false,
-      },
+        },
     });
 
     return NextResponse.json({ success: true, data: contact }, { status: 201 });
@@ -71,5 +70,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Failed to create contact' }, { status: 500 });
   }
 }
+
 
 
