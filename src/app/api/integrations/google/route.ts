@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const baseUrl = process.env.NEXTAUTH_URL || 'https://lifeflow.wishflow.eu';
-  const redirectUri = ${baseUrl}/api/integrations/google/callback;
+  const redirectUri = baseUrl + '/api/integrations/google/callback';
 
   const scopes = [
     'https://www.googleapis.com/auth/gmail.readonly',
@@ -15,7 +15,7 @@ export async function GET() {
   ];
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  authUrl.searchParams.set('client_id', clientId!);
+  authUrl.searchParams.set('client_id', clientId || '');
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', scopes.join(' '));
