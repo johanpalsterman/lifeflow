@@ -1,4 +1,4 @@
-// LifeFlow AI Rules Engine - Email Processor
+﻿// LifeFlow AI Rules Engine - Email Processor
 // Orchestreert het volledige email processing flow
 
 import type { 
@@ -6,7 +6,7 @@ import type {
   EmailProcessingResult, 
   ProcessingBatchResult,
   EmailClassification,
-} from '../types/rules';
+} from '../../types/rules';
 import { anonymizeEmail } from './email-anonymizer';
 import { classifyEmailWithTrustAI } from './trustai-client';
 import { executeMatchingRules } from './rule-executor';
@@ -371,3 +371,4 @@ export async function getProcessingStats(
     rulesTriggered,
   };
 }
+

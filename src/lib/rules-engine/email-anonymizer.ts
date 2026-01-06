@@ -1,7 +1,7 @@
-// LifeFlow AI Rules Engine - Email Anonymizer
+﻿// LifeFlow AI Rules Engine - Email Anonymizer
 // Privacy-first: verwijdert PII voordat data naar AI gaat
 
-import type { EmailData, AnonymizedEmail } from '../types/rules';
+import type { EmailData, AnonymizedEmail } from '../../types/rules';
 
 // PII patronen die verwijderd moeten worden
 const PII_PATTERNS = {
@@ -72,7 +72,7 @@ function extractKeywords(text: string): string[] {
   }
   
   // Bedragen detecteren (zonder de exacte waarden)
-  if (/€\s*\d+[.,]?\d*/.test(text) || /EUR\s*\d+[.,]?\d*/.test(text)) {
+  if (/â‚¬\s*\d+[.,]?\d*/.test(text) || /EUR\s*\d+[.,]?\d*/.test(text)) {
     keywords.push('has:amount_eur');
   }
   
@@ -119,7 +119,7 @@ export function extractEmailData(email: EmailData): Record<string, unknown> {
   const text = `${email.subject} ${email.body}`;
   
   // Bedrag extractie
-  const amountMatch = text.match(/€\s*(\d+[.,]?\d*)/);
+  const amountMatch = text.match(/â‚¬\s*(\d+[.,]?\d*)/);
   if (amountMatch) {
     data.amount = parseFloat(amountMatch[1].replace(',', '.'));
     data.currency = 'EUR';
@@ -178,3 +178,4 @@ export function extractEmailData(email: EmailData): Record<string, unknown> {
 export function anonymizeEmails(emails: EmailData[]): AnonymizedEmail[] {
   return emails.map(anonymizeEmail);
 }
+

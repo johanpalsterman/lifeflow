@@ -1,4 +1,4 @@
-// LifeFlow AI Rules Engine - TrustAI Client
+﻿// LifeFlow AI Rules Engine - TrustAI Client
 // Integreert met TrustAI Gateway voor privacy-first AI processing
 
 import type { 
@@ -6,7 +6,7 @@ import type {
   EmailClassification, 
   EmailCategory,
   ExtractedEmailData 
-} from '../types/rules';
+} from '../../types/rules';
 
 const TRUSTAI_URL = process.env.TRUSTAI_URL || 'https://trustai.wishflow.be/api';
 const TRUSTAI_API_KEY = process.env.TRUSTAI_API_KEY || '';
@@ -181,7 +181,7 @@ function extractDataFromTokens(
 
   // Check voor tracking
   if (tokens.includes('has:tracking_code')) {
-    // Tracking nummer zelf wordt lokaal geëxtraheerd, niet via AI
+    // Tracking nummer zelf wordt lokaal geÃ«xtraheerd, niet via AI
   }
 
   return data;
@@ -226,3 +226,4 @@ export async function testTrustAIConnection(): Promise<boolean> {
     return false;
   }
 }
+

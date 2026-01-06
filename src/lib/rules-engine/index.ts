@@ -1,8 +1,8 @@
-// LifeFlow AI Rules Engine - Main Export
+﻿// LifeFlow AI Rules Engine - Main Export
 // src/lib/rules-engine/index.ts
 
 // Types
-export * from '../types/rules';
+export * from '../../types/rules';
 
 // Core modules
 export { anonymizeEmail, anonymizeEmails, extractEmailData } from './email-anonymizer';

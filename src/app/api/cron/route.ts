@@ -1,4 +1,4 @@
-// LifeFlow AI Rules Engine - Cron API
+﻿// LifeFlow AI Rules Engine - Cron API
 // src/app/api/cron/route.ts
 // 
 // Dit endpoint wordt aangeroepen door een externe cron service
@@ -161,4 +161,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 

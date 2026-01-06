@@ -1,4 +1,4 @@
-// LifeFlow AI Rules Engine - Rule Executor
+﻿// LifeFlow AI Rules Engine - Rule Executor
 // Evalueert rules en voert acties uit
 
 import type { 
@@ -9,7 +9,7 @@ import type {
   RuleExecutionResult,
   ActionType,
   TriggerCondition,
-} from '../types/rules';
+} from '../../types/rules';
 import { extractEmailData } from './email-anonymizer';
 
 // Prisma types (deze komen van je schema)
@@ -400,3 +400,4 @@ export async function executeMatchingRules(
   
   return results;
 }
+

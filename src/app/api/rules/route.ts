@@ -1,4 +1,4 @@
-// LifeFlow AI Rules Engine - API Route
+﻿// LifeFlow AI Rules Engine - API Route
 // src/app/api/rules/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -269,4 +269,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 

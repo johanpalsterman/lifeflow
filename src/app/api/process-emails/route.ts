@@ -1,4 +1,4 @@
-// LifeFlow AI Rules Engine - Process Emails API
+﻿// LifeFlow AI Rules Engine - Process Emails API
 // src/app/api/process-emails/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -135,4 +135,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 

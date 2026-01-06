@@ -1,7 +1,7 @@
-// LifeFlow AI Rules Engine - Gmail Client
+﻿// LifeFlow AI Rules Engine - Gmail Client
 // Haalt emails op via Gmail API met OAuth2
 
-import type { EmailData, AttachmentInfo } from '../types/rules';
+import type { EmailData, AttachmentInfo } from '../../types/rules';
 
 interface GmailMessage {
   id: string;
@@ -314,3 +314,4 @@ export async function refreshAccessToken(
     expiresAt: new Date(Date.now() + data.expires_in * 1000),
   };
 }
+
