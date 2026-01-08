@@ -232,7 +232,8 @@ export async function processNewEmails(
           classification: {
             category: classification.category,
             confidence: classification.confidence,
-            reasoning: classification.reasoning || ''
+            reasoning: classification.reasoning || '',
+            extractedData: classification.extractedData || {}
           },
           rulesExecuted: safeRuleResults,
           processedAt: new Date()
@@ -318,7 +319,8 @@ export async function testEmailProcessing(
       classification: {
         category: classification.category,
         confidence: classification.confidence,
-        reasoning: classification.reasoning || ''
+        reasoning: classification.reasoning || '',
+            extractedData: classification.extractedData || {}
       },
       rulesExecuted: matchingRules.map(r => ({
         ruleId: r.id,
