@@ -1,8 +1,5 @@
-﻿// LifeFlow AI Rules Engine - Cron API
+// LifeFlow AI Rules Engine - Cron API
 // src/app/api/cron/route.ts
-// 
-// Dit endpoint wordt aangeroepen door een externe cron service
-// zoals Vercel Cron, Azure Functions Timer, of een eenvoudige cron job
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
@@ -11,25 +8,19 @@ import { processNewEmails } from '@/lib/rules-engine';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // 5 minuten max
 
-// Optionele beveiliging met cron secret
 const CRON_SECRET = process.env.CRON_SECRET;
 
 /**
  * GET /api/cron - Scheduled email processing
- * 
- * Configureer dit in je cron service:
- * - Vercel: vercel.json met crons configuratie
- * - Azure: Timer trigger function
- * - Externe: curl https://app/api/cron?secret=xxx
  */
 export async function GET(request: NextRequest) {
   try {
     // Valideer cron secret indien geconfigureerd
     if (CRON_SECRET) {
       const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret') || 
+      const secret = searchParams.get('secret') ||
                      request.headers.get('x-cron-secret');
-      
+
       if (secret !== CRON_SECRET) {
         return NextResponse.json(
           { success: false, error: 'Unauthorized' },
@@ -58,22 +49,23 @@ export async function GET(request: NextRequest) {
     // Process voor elke user
     for (const integration of integrations) {
       try {
-        const result = await processNewEmails(prisma as any, integration.userId, {
+        // FIXED: processNewEmails neemt nu alleen userId en options
+        const result = await processNewEmails(integration.userId, {
           maxEmails: 50,
           sinceHours: 1, // Alleen laatste uur (voor hourly cron)
         });
 
         results.push({
           userId: integration.userId,
-          processed: result.processedCount,
-          success: result.successCount,
-          errors: result.errorCount,
-          skipped: result.skippedCount,
+          processed: result.processed,
+          success: result.success,
+          errors: result.errors,
+          skipped: result.skipped,
         });
 
-        totalProcessed += result.processedCount;
-        totalSuccess += result.successCount;
-        totalErrors += result.errorCount;
+        totalProcessed += result.processed;
+        totalSuccess += result.success;
+        totalErrors += result.errors;
       } catch (error) {
         console.error(`[Cron] Error processing user ${integration.userId}:`, error);
         results.push({
@@ -100,8 +92,8 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('[Cron] Fatal error:', error);
     return NextResponse.json(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Cron job failed',
         details: error instanceof Error ? error.message : String(error),
       },
@@ -116,7 +108,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
+
     // Valideer auth
     if (CRON_SECRET) {
       const secret = body.secret || request.headers.get('x-cron-secret');
@@ -129,14 +121,14 @@ export async function POST(request: NextRequest) {
     }
 
     const {
-      userId,        // Optioneel: specifieke user
+      userId,
       maxEmails = 50,
       sinceHours = 24,
     } = body;
 
     if (userId) {
-      // Process alleen specifieke user
-      const result = await processNewEmails(prisma as any, userId, {
+      // FIXED: processNewEmails neemt nu alleen userId en options
+      const result = await processNewEmails(userId, {
         maxEmails,
         sinceHours,
       });
@@ -144,10 +136,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         data: {
-          processed: result.processedCount,
-          success: result.successCount,
-          errors: result.errorCount,
-          skipped: result.skippedCount,
+          processed: result.processed,
+          success: result.success,
+          errors: result.errors,
+          skipped: result.skipped,
         },
       });
     }
@@ -161,5 +153,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-
