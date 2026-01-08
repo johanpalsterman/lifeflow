@@ -1,374 +1,403 @@
-﻿// LifeFlow AI Rules Engine - Email Processor
-// Orchestreert het volledige email processing flow
+// src/lib/rules-engine/email-processor.ts
+// Main email processing orchestrator - FIXED VERSION v2
 
-import type { 
-  EmailData, 
-  EmailProcessingResult, 
+import prisma from '../prisma';
+import {
+  RawEmail,
   ProcessingBatchResult,
-  EmailClassification,
+  EmailClassification
 } from '../../types/rules';
-import { anonymizeEmail } from './email-anonymizer';
-import { classifyEmailWithTrustAI } from './trustai-client';
+import { anonymizeEmail, isOrderEmail, isShipmentEmail } from './email-anonymizer';
+import { classifyEmailWithTrustAI, classifyEmailLocally } from './trustai-client';
 import { executeMatchingRules } from './rule-executor';
 import { fetchGmailEmails, refreshAccessToken } from './gmail-client';
 
-// Types voor Prisma (vereenvoudigd)
-interface UserIntegration {
-  id: string;
-  userId: string;
-  provider: string;
-  accessToken: string | null;
-  refreshToken: string | null;
-  tokenExpiresAt: Date | null;
-  isActive: boolean;
-}
+// ===========================================
+// HELPER: Safe JSON stringify (prevents circular reference errors)
+// ===========================================
 
-interface AIRule {
-  id: string;
-  userId: string;
-  name: string;
-  description: string | null;
-  trigger: unknown;
-  action: unknown;
-  isActive: boolean;
-}
-
-interface PrismaClient {
-  userIntegration: {
-    findFirst: (args: { where: Record<string, unknown> }) => Promise<UserIntegration | null>;
-    update: (args: { where: { id: string }; data: Record<string, unknown> }) => Promise<unknown>;
-  };
-  aIRule: {
-    findMany: (args: { where: Record<string, unknown> }) => Promise<AIRule[]>;
-  };
-  processedEmail: {
-    findUnique: (args: { where: { externalId: string } }) => Promise<unknown>;
-    create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
-  };
-  task: {
-    create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
-  };
-  event: {
-    create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
-  };
-  invoice: {
-    create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
-  };
-  package: {
-    create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
-  };
-}
-
-/**
- * Hoofdfunctie: Verwerkt nieuwe emails voor een gebruiker
- */
-export async function processNewEmails(
-  prisma: PrismaClient,
-  userId?: string,
-  options: {
-    maxEmails?: number;
-    sinceHours?: number;
-  } = {}
-): Promise<ProcessingBatchResult> {
-  const startTime = new Date();
-  const results: EmailProcessingResult[] = [];
-  let successCount = 0;
-  let errorCount = 0;
-  let skippedCount = 0;
-
-  try {
-    // 1. Haal actieve Google integratie op
-    const integration = await prisma.userIntegration.findFirst({
-      where: {
-        ...(userId && { userId }),
-        provider: 'google',
-        isActive: true,
-      },
-    });
-
-    if (!integration || !integration.accessToken) {
-      return {
-        processedCount: 0,
-        successCount: 0,
-        errorCount: 0,
-        skippedCount: 0,
-        results: [],
-        startTime,
-        endTime: new Date(),
-      };
+function safeStringify(obj: any, maxDepth: number = 3): string {
+  const seen = new WeakSet();
+  let depth = 0;
+  
+  return JSON.stringify(obj, (key, value) => {
+    // Skip internal Prisma properties
+    if (key.startsWith('$') || key === '_' || key === 'prisma') {
+      return undefined;
     }
-
-    // 2. Refresh token indien nodig
-    let accessToken = integration.accessToken;
-    if (integration.tokenExpiresAt && integration.tokenExpiresAt < new Date()) {
-      if (integration.refreshToken) {
-        const clientId = process.env.GOOGLE_CLIENT_ID!;
-        const clientSecret = process.env.GOOGLE_CLIENT_SECRET!;
-        
-        const newTokens = await refreshAccessToken(
-          integration.refreshToken,
-          clientId,
-          clientSecret
-        );
-        
-        accessToken = newTokens.accessToken;
-        
-        await prisma.userIntegration.update({
-          where: { id: integration.id },
-          data: {
-            accessToken: newTokens.accessToken,
-            tokenExpiresAt: newTokens.expiresAt,
-          },
-        });
-      }
-    }
-
-    // 3. Haal emails op
-    const sinceDate = new Date();
-    sinceDate.setHours(sinceDate.getHours() - (options.sinceHours || 24));
     
-    const emails = await fetchGmailEmails(accessToken, {
-      maxResults: options.maxEmails || 20,
-      after: sinceDate,
-      labelIds: ['INBOX'],
-    });
-
-    // 4. Haal actieve rules op
-    const rules = await prisma.aIRule.findMany({
-      where: {
-        userId: integration.userId,
-        isActive: true,
-      },
-    });
-
-    // 5. Verwerk elke email
-    for (const email of emails) {
-      try {
-        // Check of al verwerkt
-        const existing = await prisma.processedEmail.findUnique({
-          where: { externalId: email.id },
-        });
-
-        if (existing) {
-          skippedCount++;
-          continue;
-        }
-
-        // Verwerk email
-        const result = await processEmail(
-          email,
-          rules,
-          integration.userId,
-          prisma
-        );
-
-        results.push(result);
-
-        if (result.error) {
-          errorCount++;
-        } else {
-          successCount++;
-        }
-      } catch (error) {
-        errorCount++;
-        results.push({
-          emailId: email.id,
-          classification: {
-            category: 'unknown',
-            confidence: 0,
-            extractedData: {},
-          },
-          rulesExecuted: [],
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
+    // Skip functions
+    if (typeof value === 'function') {
+      return undefined;
     }
+    
+    // Handle Date objects
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    
+    // Handle circular references and max depth
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) {
+        return '[Circular]';
+      }
+      seen.add(value);
+    }
+    
+    return value;
+  });
+}
 
-    return {
-      processedCount: emails.length,
-      successCount,
-      errorCount,
-      skippedCount,
-      results,
-      startTime,
-      endTime: new Date(),
-    };
-  } catch (error) {
-    return {
-      processedCount: 0,
-      successCount: 0,
-      errorCount: 1,
-      skippedCount: 0,
-      results: [{
-        emailId: 'batch',
-        classification: { category: 'unknown', confidence: 0, extractedData: {} },
-        rulesExecuted: [],
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }],
-      startTime,
-      endTime: new Date(),
-    };
+function serializeForStorage(obj: any): any {
+  try {
+    return JSON.parse(safeStringify(obj));
+  } catch (e) {
+    console.error('Serialization error:', e);
+    return { error: 'Could not serialize', timestamp: new Date().toISOString() };
   }
 }
 
-/**
- * Verwerkt een enkele email
- */
-async function processEmail(
-  email: EmailData,
-  rules: AIRule[],
+// ===========================================
+// MAIN PROCESSING FUNCTION
+// ===========================================
+
+export async function processNewEmails(
   userId: string,
-  prisma: PrismaClient
-): Promise<EmailProcessingResult> {
-  // 1. Anonimiseer email voor AI
-  const anonymized = anonymizeEmail(email);
+  options: {
+    maxEmails?: number;
+    sinceHours?: number;
+    markAsProcessed?: boolean;
+    useTrustAI?: boolean;
+  } = {}
+): Promise<ProcessingBatchResult> {
+  const {
+    maxEmails = 50,
+    sinceHours = 24,
+    markAsProcessed = true,
+    useTrustAI = false // Default to local classification to avoid external API issues
+  } = options;
 
-  // 2. Classificeer via TrustAI (of lokale fallback)
-  const classification = await classifyEmailWithTrustAI(anonymized);
+  console.log('[EmailProcessor] Starting with options:', { maxEmails, sinceHours, markAsProcessed, useTrustAI });
 
-  // 3. Voer matching rules uit
-  const rulesExecuted = await executeMatchingRules(
-    rules,
-    classification,
-    email,
-    prisma as any
-  );
-
-  // 4. Sla verwerkte email op
-  await prisma.processedEmail.create({
-    data: {
-      externalId: email.id,
-      userId,
-      provider: 'google',
-      category: classification.category,
-      confidence: classification.confidence,
-      rawData: {
-        from: email.from,
-        subject: email.subject,
-        date: email.date.toISOString(),
-        labels: email.labels,
-      },
-      processedData: {
-        classification,
-        rulesExecuted: rulesExecuted.map(r => ({
-          ruleId: r.ruleId,
-          ruleName: r.ruleName,
-          triggered: r.triggered,
-          actionExecuted: r.actionExecuted,
-          createdRecordId: r.createdRecordId,
-        })),
-      },
-    },
-  });
-
-  return {
-    emailId: email.id,
-    classification,
-    rulesExecuted,
+  const result: ProcessingBatchResult = {
+    processed: 0,
+    success: 0,
+    errors: 0,
+    skipped: 0,
+    results: [],
+    createdRecords: {
+      tasks: 0,
+      events: 0,
+      invoices: 0,
+      packages: 0,
+      orders: 0
+    }
   };
+
+  try {
+    // Get user's Google integration
+    const integration = await prisma.userIntegration.findFirst({
+      where: {
+        userId,
+        provider: 'google',
+        isActive: true
+      },
+      select: {
+        id: true,
+        accessToken: true,
+        refreshToken: true,
+        tokenExpiresAt: true
+      }
+    });
+
+    if (!integration) {
+      console.log('[EmailProcessor] No active Google integration for user:', userId);
+      return result;
+    }
+
+    // Refresh token if needed
+    let accessToken = integration.accessToken;
+    if (integration.tokenExpiresAt && new Date(integration.tokenExpiresAt) < new Date()) {
+      console.log('[EmailProcessor] Refreshing expired token...');
+      const refreshed = await refreshAccessToken(integration.refreshToken!);
+      if (refreshed) {
+        accessToken = refreshed.accessToken;
+        await prisma.userIntegration.update({
+          where: { id: integration.id },
+          data: {
+            accessToken: refreshed.accessToken,
+            tokenExpiresAt: refreshed.expiresAt
+          }
+        });
+      }
+    }
+
+    // Calculate since date
+    const sinceDate = new Date();
+    sinceDate.setHours(sinceDate.getHours() - sinceHours);
+
+    console.log('[EmailProcessor] Fetching emails since:', sinceDate.toISOString());
+
+    // Fetch emails from Gmail
+    const emails = await fetchGmailEmails(accessToken!, {
+      maxResults: maxEmails,
+      after: sinceDate,
+      labelIds: ['INBOX']
+    });
+
+    if (!emails || emails.length === 0) {
+      console.log('[EmailProcessor] No new emails to process');
+      return result;
+    }
+
+    console.log('[EmailProcessor] Fetched', emails.length, 'emails');
+
+    // Get user's active rules (only select needed fields to avoid circular refs)
+    const rules = await prisma.aIRule.findMany({
+      where: { userId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        trigger: true,
+        action: true,
+        isActive: true
+      }
+    });
+
+    console.log('[EmailProcessor] Found', rules.length, 'active rules');
+
+    // Process each email
+    for (const email of emails) {
+      result.processed++;
+
+      try {
+        // Check if already processed
+        const alreadyProcessed = await prisma.processedEmail.findFirst({
+          where: { emailId: email.id, userId },
+          select: { id: true }
+        });
+
+        if (alreadyProcessed) {
+          result.skipped++;
+          continue;
+        }
+
+        // Anonymize and classify
+        const anonymized = anonymizeEmail(email);
+        let classification: EmailClassification;
+
+        // Use heuristics first for orders vs delivery
+        if (isOrderEmail(email) && !isShipmentEmail(email)) {
+          classification = {
+            category: 'order',
+            confidence: 0.9,
+            extractedData: {},
+            reasoning: 'Detected as order confirmation email'
+          };
+        } else if (isShipmentEmail(email)) {
+          classification = {
+            category: 'delivery',
+            confidence: 0.9,
+            extractedData: {},
+            reasoning: 'Detected as shipment notification email'
+          };
+        } else {
+          // Use local classification (faster and no external dependencies)
+          classification = classifyEmailLocally(anonymized);
+        }
+
+        console.log('[EmailProcessor] Email', email.id, 'classified as:', classification.category);
+
+        // Execute matching rules
+        const ruleResults = await executeMatchingRules(
+          rules as any,
+          email,
+          classification,
+          userId
+        );
+
+        // Count created records (safely access properties)
+        for (const ruleResult of ruleResults) {
+          if (ruleResult.actionExecuted && ruleResult.result) {
+            const res = ruleResult.result;
+            if (res.taskId) result.createdRecords.tasks++;
+            if (res.eventId) result.createdRecords.events++;
+            if (res.invoiceId) result.createdRecords.invoices++;
+            if (res.packageId) result.createdRecords.packages++;
+            if (res.orderId) result.createdRecords.orders++;
+          }
+        }
+
+        // Create safe objects for storage (no circular references)
+        const safeClassification = {
+          category: classification.category,
+          confidence: classification.confidence,
+          reasoning: classification.reasoning || ''
+        };
+
+        const safeRuleResults = ruleResults.map(r => ({
+          ruleId: r.ruleId || '',
+          ruleName: r.ruleName || '',
+          triggered: Boolean(r.triggered),
+          actionExecuted: Boolean(r.actionExecuted),
+          result: r.result ? {
+            taskId: r.result.taskId || null,
+            eventId: r.result.eventId || null,
+            invoiceId: r.result.invoiceId || null,
+            packageId: r.result.packageId || null,
+            orderId: r.result.orderId || null,
+            shopName: r.result.shopName || null,
+            vendor: r.result.vendor || null
+          } : null,
+          error: r.error || null
+        }));
+
+        // Record as processed
+        if (markAsProcessed) {
+          await prisma.processedEmail.create({
+            data: {
+              userId,
+              emailId: email.id,
+              classification: safeClassification,
+              rulesExecuted: safeRuleResults,
+              processedAt: new Date()
+            }
+          });
+        }
+
+        result.results.push({
+          id: email.id,
+          emailId: email.id,
+          classification: safeClassification,
+          rulesExecuted: safeRuleResults,
+          processedAt: new Date()
+        });
+
+        result.success++;
+
+      } catch (emailError: any) {
+        console.error('[EmailProcessor] Error processing email:', email.id, emailError?.message || emailError);
+        result.errors++;
+      }
+    }
+
+    console.log('[EmailProcessor] Completed:', result);
+
+  } catch (error: any) {
+    console.error('[EmailProcessor] Fatal error:', error?.message || error);
+    throw error;
+  }
+
+  return result;
 }
 
-/**
- * Test email processing met een mock email
- */
+// ===========================================
+// TEST FUNCTION
+// ===========================================
+
 export async function testEmailProcessing(
-  prisma: PrismaClient,
   userId: string,
-  testEmail: Partial<EmailData>
-): Promise<EmailProcessingResult> {
-  const email: EmailData = {
-    id: `test-${Date.now()}`,
-    threadId: `test-thread-${Date.now()}`,
-    from: testEmail.from || 'test@example.com',
-    to: testEmail.to || ['user@example.com'],
-    subject: testEmail.subject || 'Test Email',
-    body: testEmail.body || 'This is a test email body',
-    date: testEmail.date || new Date(),
-    labels: testEmail.labels || ['INBOX'],
-    attachments: testEmail.attachments || [],
+  testEmails: RawEmail[]
+): Promise<ProcessingBatchResult> {
+  const result: ProcessingBatchResult = {
+    processed: 0,
+    success: 0,
+    errors: 0,
+    skipped: 0,
+    results: [],
+    createdRecords: { tasks: 0, events: 0, invoices: 0, packages: 0, orders: 0 }
   };
 
   const rules = await prisma.aIRule.findMany({
     where: { userId, isActive: true },
-  });
-
-  // Anonimiseer en classificeer
-  const anonymized = anonymizeEmail(email);
-  const classification = await classifyEmailWithTrustAI(anonymized);
-
-  // Check welke rules zouden triggeren (zonder uit te voeren)
-  const { shouldTrigger } = await import('./rule-executor');
-  const mockResults = rules.map(rule => ({
-    ruleId: rule.id,
-    ruleName: rule.name,
-    triggered: shouldTrigger(rule, classification, email),
-    actionExecuted: false,
-    timestamp: new Date(),
-  }));
-
-  return {
-    emailId: email.id,
-    classification,
-    rulesExecuted: mockResults,
-  };
-}
-
-/**
- * Geeft statistieken over verwerkte emails
- */
-export async function getProcessingStats(
-  prisma: any,
-  userId: string,
-  days: number = 7
-): Promise<{
-  totalProcessed: number;
-  byCategory: Record<string, number>;
-  byDay: Array<{ date: string; count: number }>;
-  rulesTriggered: number;
-}> {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-
-  const processed = await prisma.processedEmail.findMany({
-    where: {
-      userId,
-      createdAt: { gte: since },
-    },
     select: {
-      category: true,
-      createdAt: true,
-      processedData: true,
-    },
+      id: true,
+      name: true,
+      trigger: true,
+      action: true
+    }
   });
 
-  const byCategory: Record<string, number> = {};
-  const byDayMap: Record<string, number> = {};
-  let rulesTriggered = 0;
+  for (const email of testEmails) {
+    result.processed++;
 
-  for (const email of processed) {
-    // Count by category
-    byCategory[email.category] = (byCategory[email.category] || 0) + 1;
+    const anonymized = anonymizeEmail(email);
+    let classification: EmailClassification;
 
-    // Count by day
-    const day = email.createdAt.toISOString().split('T')[0];
-    byDayMap[day] = (byDayMap[day] || 0) + 1;
-
-    // Count rules triggered
-    const data = email.processedData as any;
-    if (data?.rulesExecuted) {
-      rulesTriggered += data.rulesExecuted.filter((r: any) => r.triggered).length;
+    if (isOrderEmail(email) && !isShipmentEmail(email)) {
+      classification = {
+        category: 'order',
+        confidence: 0.9,
+        extractedData: {},
+        reasoning: 'Detected as order confirmation'
+      };
+    } else if (isShipmentEmail(email)) {
+      classification = {
+        category: 'delivery',
+        confidence: 0.9,
+        extractedData: {},
+        reasoning: 'Detected as shipment notification'
+      };
+    } else {
+      classification = classifyEmailLocally(anonymized);
     }
+
+    const matchingRules = rules.filter(rule => {
+      const trigger = rule.trigger as any;
+      return trigger?.category === classification.category;
+    });
+
+    result.results.push({
+      id: email.id,
+      emailId: email.id,
+      classification: {
+        category: classification.category,
+        confidence: classification.confidence,
+        reasoning: classification.reasoning || ''
+      },
+      rulesExecuted: matchingRules.map(r => ({
+        ruleId: r.id,
+        ruleName: r.name,
+        triggered: true,
+        actionExecuted: false,
+        timestamp: new Date()
+      })),
+      processedAt: new Date()
+    });
+
+    result.success++;
   }
 
-  const byDay = Object.entries(byDayMap)
-    .map(([date, count]) => ({ date, count }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  return {
-    totalProcessed: processed.length,
-    byCategory,
-    byDay,
-    rulesTriggered,
-  };
+  return result;
 }
 
+// ===========================================
+// STATS FUNCTION
+// ===========================================
+
+export async function getProcessingStats(userId: string) {
+  const [totalProcessed, last24h, orderStats] = await Promise.all([
+    prisma.processedEmail.count({ where: { userId } }),
+    prisma.processedEmail.count({
+      where: {
+        userId,
+        processedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+      }
+    }),
+    prisma.order.groupBy({
+      by: ['status'],
+      where: { userId },
+      _count: { status: true }
+    })
+  ]);
+
+  return {
+    totalProcessed,
+    last24h,
+    orderStats: orderStats.reduce((acc, item) => {
+      acc[item.status] = item._count.status;
+      return acc;
+    }, {} as Record<string, number>)
+  };
+}

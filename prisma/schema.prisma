@@ -24,6 +24,7 @@ model User {
   wishes          Wish[]
   processedEmails ProcessedEmail[]
   invoices        Invoice[]
+  orders          Order[]
 }
 
 model UserIntegration {
@@ -180,4 +181,59 @@ model Wish {
   updatedAt   DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+// Voeg toe aan prisma/schema.prisma
+// Copy-paste dit onder de bestaande models
+
+model Order {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Bestelling info
+  shopName        String    // AliExpress, Bol.com, Amazon, etc.
+  orderNumber     String?   // Bestelnummer indien bekend
+  productName     String?   // Korte beschrijving van wat besteld is
+  
+  // Status tracking
+  status          OrderStatus @default(ORDERED)
+  
+  // Financieel
+  amount          Float?
+  currency        String    @default("EUR")
+  isPaid          Boolean   @default(false)
+  
+  // Datums
+  orderDate       DateTime  @default(now())
+  expectedDate    DateTime? // Verwachte leverdatum
+  shippedDate     DateTime? // Wanneer verzonden
+  deliveredDate   DateTime? // Wanneer geleverd
+  
+  // Tracking (link naar Package indien beschikbaar)
+  trackingNumber  String?
+  packageId       String?   // Link naar Package als het verzonden is
+  
+  // Email referentie
+  sourceEmailId   String?   // Gmail message ID
+  
+  // Meta
+  notes           String?
+  reminderSent    Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([shopName])
+}
+
+enum OrderStatus {
+  ORDERED       // Bestelling geplaatst
+  AWAITING_PAYMENT  // Wacht op betaling
+  PAID          // Betaald, wacht op verzending
+  PROCESSING    // In behandeling bij verkoper
+  SHIPPED       // Verzonden (heeft dan meestal ook een Package)
+  DELIVERED     // Afgeleverd
+  CANCELLED     // Geannuleerd
+  RETURNED      // Geretourneerd
 }

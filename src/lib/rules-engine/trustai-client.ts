@@ -1,229 +1,332 @@
-﻿// LifeFlow AI Rules Engine - TrustAI Client
-// Integreert met TrustAI Gateway voor privacy-first AI processing
+// src/lib/rules-engine/trustai-client.ts - VERVANG VOLLEDIG
+// TrustAI Gateway client for AI-powered email classification
 
-import type { 
+import { 
   AnonymizedEmail, 
   EmailClassification, 
   EmailCategory,
-  ExtractedEmailData 
+  KNOWN_SHOPS 
 } from '../../types/rules';
 
 const TRUSTAI_URL = process.env.TRUSTAI_URL || 'https://trustai.wishflow.be/api';
-const TRUSTAI_API_KEY = process.env.TRUSTAI_API_KEY || '';
+const TRUSTAI_API_KEY = process.env.TRUSTAI_API_KEY;
 
-// Fallback classificatie wanneer TrustAI niet beschikbaar is
-const KEYWORD_RULES: Record<string, EmailCategory> = {
-  'invoice:': 'invoice',
-  'delivery:': 'delivery',
-  'carrier:': 'delivery',
-  'event:': 'event',
-  'task:': 'task',
-  'newsletter:': 'newsletter',
-};
+// ===========================================
+// DOMAIN SCORING
+// ===========================================
 
-// Bekende domeinen per categorie
-const DOMAIN_CATEGORIES: Record<string, EmailCategory> = {
-  // Delivery
+// Domains strongly associated with specific categories
+const DOMAIN_CATEGORY_HINTS: Record<string, EmailCategory> = {
+  // Delivery/shipping
   'postnl.nl': 'delivery',
+  'postnl.post': 'delivery',
   'dhl.com': 'delivery',
-  'dpd.nl': 'delivery',
+  'dhl.nl': 'delivery',
+  'dhlparcel.nl': 'delivery',
   'ups.com': 'delivery',
+  'dpd.nl': 'delivery',
   'gls-group.eu': 'delivery',
-  'bol.com': 'delivery',
-  'amazon.com': 'delivery',
-  'amazon.nl': 'delivery',
-  'coolblue.nl': 'delivery',
-  'zalando.nl': 'delivery',
+  'fedex.com': 'delivery',
   
-  // Invoices
+  // Invoices/billing
   'mollie.com': 'invoice',
   'stripe.com': 'invoice',
   'paypal.com': 'invoice',
   'ing.nl': 'invoice',
   'rabobank.nl': 'invoice',
-  'abnamro.nl': 'invoice',
+  'abn.nl': 'invoice',
+  'billit.be': 'invoice',
+  'peppol.eu': 'invoice',
   
-  // Newsletter
+  // Events/calendar
+  'calendly.com': 'event',
+  'eventbrite.com': 'event',
+  'meetup.com': 'event',
+  
+  // Tasks/productivity
+  'asana.com': 'task',
+  'trello.com': 'task',
+  'notion.so': 'task',
+  'todoist.com': 'task',
+  
+  // Newsletters
   'mailchimp.com': 'newsletter',
   'sendgrid.net': 'newsletter',
   'substack.com': 'newsletter',
 };
 
-/**
- * Classificeert email via TrustAI Gateway
- */
-export async function classifyEmailWithTrustAI(
-  anonymizedEmail: AnonymizedEmail
-): Promise<EmailClassification> {
-  
-  // Probeer TrustAI eerst
-  if (TRUSTAI_URL && TRUSTAI_API_KEY) {
-    try {
-      const response = await fetch(`${TRUSTAI_URL}/classify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${TRUSTAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          action: 'classify_email',
-          data: anonymizedEmail,
-          options: {
-            includeReasoning: true,
-            minConfidence: 0.6,
-          },
-        }),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.classification) {
-          return result.classification;
-        }
-      }
-    } catch (error) {
-      console.warn('TrustAI unavailable, falling back to local classification:', error);
-    }
+// Add shop domains as order hints
+for (const shop of Object.values(KNOWN_SHOPS)) {
+  for (const domain of shop.domains) {
+    DOMAIN_CATEGORY_HINTS[domain] = 'order';
   }
-
-  // Fallback naar lokale regel-gebaseerde classificatie
-  return classifyEmailLocally(anonymizedEmail);
 }
 
+// ===========================================
+// KEYWORD SCORING
+// ===========================================
+
+const KEYWORD_SCORES: Record<EmailCategory, Record<string, number>> = {
+  invoice: {
+    'factuur': 10, 'invoice': 10, 'rekening': 8, 'betaling': 7,
+    'payment': 7, 'bedrag': 6, 'btw': 8, 'vat': 8, 'totaal': 5,
+    'te betalen': 9, 'vervaldatum': 8, 'incasso': 7
+  },
+  delivery: {
+    'verzonden': 10, 'shipped': 10, 'onderweg': 9, 'tracking': 10,
+    'pakket': 8, 'package': 8, 'bezorgd': 9, 'delivered': 9,
+    'levering': 7, 'koerier': 8, 'afhaalpunt': 9, 'volg je pakket': 10
+  },
+  order: {
+    'bestelling': 10, 'order': 8, 'besteld': 9, 'bevestiging': 7,
+    'winkelwagen': 8, 'aankoop': 8, 'purchase': 8, 'betaal nu': 9,
+    'wacht op betaling': 10, 'bestelbevestiging': 10, 'in behandeling': 8,
+    'wordt verwerkt': 8, 'bedankt voor je bestelling': 10
+  },
+  event: {
+    'afspraak': 10, 'appointment': 10, 'meeting': 9, 'vergadering': 9,
+    'uitnodiging': 8, 'invitation': 8, 'agenda': 7, 'datum': 5,
+    'locatie': 6, 'reservering': 8, 'booking': 8
+  },
+  task: {
+    'actie': 7, 'todo': 9, 'taak': 9, 'task': 9, 'verzoek': 8,
+    'request': 8, 'deadline': 9, 'urgent': 10, 'belangrijk': 7,
+    'opvolging': 8, 'follow-up': 8, 'graag': 6, 'kun je': 7
+  },
+  newsletter: {
+    'nieuwsbrief': 10, 'newsletter': 10, 'uitschrijven': 9,
+    'unsubscribe': 9, 'aanbieding': 7, 'korting': 7, 'promo': 8
+  },
+  spam: {
+    'won': 8, 'winner': 9, 'lottery': 10, 'prize': 9, 'gratis': 6,
+    'click here': 8, 'limited time': 8, 'act now': 9
+  },
+  personal: {
+    'hoi': 7, 'hey': 6, 'hallo': 5, 'groeten': 7, 'bedankt': 5,
+    'fijn weekend': 9, 'tot snel': 8, 'liefs': 9
+  },
+  unknown: {}
+};
+
+// ===========================================
+// LOCAL CLASSIFICATION
+// ===========================================
+
 /**
- * Lokale classificatie als fallback (geen AI nodig)
+ * Classify email locally without AI (fallback)
  */
 export function classifyEmailLocally(email: AnonymizedEmail): EmailClassification {
-  const allTokens = [...email.subjectTokens, ...email.bodyTokens];
   const scores: Record<EmailCategory, number> = {
     invoice: 0,
     delivery: 0,
+    order: 0,
     event: 0,
     task: 0,
     newsletter: 0,
     spam: 0,
     personal: 0,
-    unknown: 0,
+    unknown: 0
   };
-
-  // Score op basis van keywords
-  for (const token of allTokens) {
-    for (const [prefix, category] of Object.entries(KEYWORD_RULES)) {
-      if (token.startsWith(prefix)) {
-        scores[category] += 2;
+  
+  // Domain-based scoring (high weight)
+  const domainCategory = DOMAIN_CATEGORY_HINTS[email.fromDomain];
+  if (domainCategory) {
+    scores[domainCategory] += 30;
+  }
+  
+  // Check if domain contains known shop name
+  for (const shop of Object.values(KNOWN_SHOPS)) {
+    if (shop.domains.some(d => email.fromDomain.includes(d) || d.includes(email.fromDomain))) {
+      scores.order += 25;
+      break;
+    }
+  }
+  
+  // Keyword scoring for subject
+  const allTokens = [...email.subjectTokens, ...email.bodyTokens];
+  
+  for (const [category, keywords] of Object.entries(KEYWORD_SCORES)) {
+    for (const token of allTokens) {
+      const score = keywords[token.toLowerCase()];
+      if (score) {
+        scores[category as EmailCategory] += score;
       }
     }
-    
-    // Specifieke boosts
-    if (token === 'has:amount_eur') scores.invoice += 3;
-    if (token === 'has:tracking_code') scores.delivery += 3;
-    if (token === 'has:date') {
-      scores.event += 1;
-      scores.task += 1;
-    }
   }
-
-  // Score op basis van domein
-  const domainCategory = DOMAIN_CATEGORIES[email.fromDomain];
-  if (domainCategory) {
-    scores[domainCategory] += 5;
-  }
-
-  // Score op basis van attachments
-  if (email.hasAttachments) {
-    if (email.attachmentTypes.some(t => t.includes('pdf'))) {
-      scores.invoice += 2;
-    }
-  }
-
-  // Bepaal winnende categorie
-  let maxScore = 0;
-  let category: EmailCategory = 'unknown';
   
-  for (const [cat, score] of Object.entries(scores)) {
+  // Differentiate between order and delivery
+  // If we have both, check which keywords are stronger
+  if (scores.order > 0 && scores.delivery > 0) {
+    const deliveryKeywords = ['verzonden', 'shipped', 'tracking', 'onderweg', 'bezorgd'];
+    const orderKeywords = ['bestelling', 'bevestiging', 'betaal', 'wacht op'];
+    
+    const hasDeliveryKeywords = allTokens.some(t => deliveryKeywords.includes(t.toLowerCase()));
+    const hasOrderKeywords = allTokens.some(t => orderKeywords.some(k => t.toLowerCase().includes(k)));
+    
+    if (hasDeliveryKeywords && !hasOrderKeywords) {
+      scores.delivery += 15;
+    } else if (hasOrderKeywords && !hasDeliveryKeywords) {
+      scores.order += 15;
+    }
+  }
+  
+  // Find highest scoring category
+  let maxScore = 0;
+  let bestCategory: EmailCategory = 'unknown';
+  
+  for (const [category, score] of Object.entries(scores)) {
     if (score > maxScore) {
       maxScore = score;
-      category = cat as EmailCategory;
+      bestCategory = category as EmailCategory;
     }
   }
-
-  // Bereken confidence (genormaliseerd)
+  
+  // Calculate confidence (0-1)
   const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
-  const confidence = totalScore > 0 ? Math.min(maxScore / totalScore + 0.3, 0.95) : 0.5;
-
+  const confidence = totalScore > 0 ? Math.min(maxScore / totalScore + 0.3, 0.95) : 0.1;
+  
   return {
-    category,
+    category: bestCategory,
     confidence,
-    extractedData: extractDataFromTokens(allTokens, email),
-    reasoning: `Local classification based on ${allTokens.length} tokens, domain: ${email.fromDomain}`,
+    extractedData: {},
+    reasoning: `Local classification based on ${allTokens.length} tokens, domain: ${email.fromDomain}`
   };
 }
 
-/**
- * Extraheert gestructureerde data uit tokens
- */
-function extractDataFromTokens(
-  tokens: string[], 
-  email: AnonymizedEmail
-): ExtractedEmailData {
-  const data: ExtractedEmailData = {};
-
-  // Carrier detectie
-  const carrierToken = tokens.find(t => t.startsWith('carrier:'));
-  if (carrierToken) {
-    data.carrier = carrierToken.replace('carrier:', '');
-  }
-
-  // Check voor bedrag
-  if (tokens.includes('has:amount_eur')) {
-    data.currency = 'EUR';
-  }
-
-  // Check voor tracking
-  if (tokens.includes('has:tracking_code')) {
-    // Tracking nummer zelf wordt lokaal geÃ«xtraheerd, niet via AI
-  }
-
-  return data;
-}
+// ===========================================
+// TRUSTAI CLASSIFICATION
+// ===========================================
 
 /**
- * Batch classificatie van meerdere emails
+ * Classify email using TrustAI Gateway
  */
-export async function classifyEmails(
-  emails: AnonymizedEmail[]
-): Promise<Map<string, EmailClassification>> {
-  const results = new Map<string, EmailClassification>();
+export async function classifyEmailWithTrustAI(email: AnonymizedEmail): Promise<EmailClassification> {
+  // If no API key or URL, fall back to local
+  if (!TRUSTAI_API_KEY || !TRUSTAI_URL) {
+    console.log('TrustAI not configured, using local classification');
+    return classifyEmailLocally(email);
+  }
+  
+  try {
+    const prompt = `Classify this email into one of these categories:
+- invoice: Bills, payments, financial documents
+- delivery: Package shipments, tracking updates
+- order: Order confirmations, purchase receipts (NOT yet shipped)
+- event: Appointments, meetings, calendar items
+- task: Action requests, to-do items
+- newsletter: Marketing, promotional content
+- spam: Unwanted, suspicious emails
+- personal: Personal correspondence
+- unknown: Cannot determine
 
-  // Process in parallel met rate limiting
-  const batchSize = 5;
-  for (let i = 0; i < emails.length; i += batchSize) {
-    const batch = emails.slice(i, i + batchSize);
-    const classifications = await Promise.all(
-      batch.map(email => classifyEmailWithTrustAI(email))
-    );
-    
-    batch.forEach((email, index) => {
-      results.set(email.id, classifications[index]);
+Email data:
+- From domain: ${email.fromDomain}
+- Subject keywords: ${email.subjectTokens.join(', ')}
+- Body keywords: ${email.bodyTokens.join(', ')}
+- Has attachments: ${email.hasAttachments}
+- Attachment types: ${email.attachmentTypes.join(', ')}
+
+IMPORTANT: Distinguish between 'order' (new purchase, not yet shipped) and 'delivery' (package in transit or delivered).
+
+Respond with JSON only:
+{
+  "category": "category_name",
+  "confidence": 0.0-1.0,
+  "reasoning": "brief explanation"
+}`;
+
+    const response = await fetch(`${TRUSTAI_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${TRUSTAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: prompt }],
+        model: 'claude-3-haiku',
+        max_tokens: 200,
+        temperature: 0.1
+      })
     });
-  }
 
-  return results;
+    if (!response.ok) {
+      console.error('TrustAI error:', response.status);
+      return classifyEmailLocally(email);
+    }
+
+    const result = await response.json();
+    const content = result.choices?.[0]?.message?.content || result.content;
+    
+    // Parse JSON response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        category: parsed.category as EmailCategory,
+        confidence: parsed.confidence || 0.8,
+        extractedData: {},
+        reasoning: parsed.reasoning || 'TrustAI classification'
+      };
+    }
+    
+    // Fallback to local if parsing fails
+    return classifyEmailLocally(email);
+    
+  } catch (error) {
+    console.error('TrustAI classification error:', error);
+    return classifyEmailLocally(email);
+  }
 }
 
 /**
- * Test de TrustAI connectie
+ * Test TrustAI connection
  */
-export async function testTrustAIConnection(): Promise<boolean> {
-  if (!TRUSTAI_URL) return false;
+export async function testTrustAIConnection(): Promise<{ connected: boolean; error?: string }> {
+  if (!TRUSTAI_API_KEY || !TRUSTAI_URL) {
+    return { connected: false, error: 'TrustAI not configured' };
+  }
   
   try {
     const response = await fetch(`${TRUSTAI_URL}/health`, {
-      headers: TRUSTAI_API_KEY ? { 'Authorization': `Bearer ${TRUSTAI_API_KEY}` } : {},
+      headers: { 'Authorization': `Bearer ${TRUSTAI_API_KEY}` }
     });
-    return response.ok;
-  } catch {
-    return false;
+    
+    return { connected: response.ok };
+  } catch (error) {
+    return { connected: false, error: String(error) };
   }
 }
 
+/**
+ * Batch classify emails (with rate limiting)
+ */
+export async function classifyEmailsBatch(
+  emails: AnonymizedEmail[],
+  useTrustAI: boolean = true
+): Promise<Map<string, EmailClassification>> {
+  const results = new Map<string, EmailClassification>();
+  
+  // Process in parallel with limit of 5 concurrent
+  const batchSize = 5;
+  for (let i = 0; i < emails.length; i += batchSize) {
+    const batch = emails.slice(i, i + batchSize);
+    const promises = batch.map(async (email) => {
+      const classification = useTrustAI 
+        ? await classifyEmailWithTrustAI(email)
+        : classifyEmailLocally(email);
+      return { id: email.id, classification };
+    });
+    
+    const batchResults = await Promise.all(promises);
+    for (const { id, classification } of batchResults) {
+      results.set(id, classification);
+    }
+    
+    // Small delay between batches to avoid rate limiting
+    if (i + batchSize < emails.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  
+  return results;
+}
