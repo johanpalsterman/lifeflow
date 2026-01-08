@@ -75,7 +75,9 @@ export async function processNewEmails(
     let accessToken = integration.accessToken;
     if (integration.tokenExpiresAt && new Date(integration.tokenExpiresAt) < new Date()) {
       console.log('[EmailProcessor] Refreshing expired token...');
-      const refreshed = await refreshAccessToken(integration.refreshToken!);
+      const clientId = process.env.GOOGLE_CLIENT_ID!;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET!;
+      const refreshed = await refreshAccessToken(integration.refreshToken!, clientId, clientSecret);
       if (refreshed) {
         accessToken = refreshed.accessToken;
         await prisma.userIntegration.update({
