@@ -1,15 +1,17 @@
 // src/lib/rules-engine/email-processor.ts
-// Main email processing orchestrator - FIXED VERSION v3
-// Compatible with existing ProcessedEmail schema
+// Main email processing orchestrator - FIXED VERSION v4
+// All TypeScript types are correct
 
 import prisma from '../prisma';
 import {
   RawEmail,
   ProcessingBatchResult,
-  EmailClassification
+  EmailClassification,
+  ProcessedEmail,
+  RuleExecutionResult
 } from '../../types/rules';
 import { anonymizeEmail, isOrderEmail, isShipmentEmail } from './email-anonymizer';
-import { classifyEmailWithTrustAI, classifyEmailLocally } from './trustai-client';
+import { classifyEmailLocally } from './trustai-client';
 import { executeMatchingRules } from './rule-executor';
 import { fetchGmailEmails, refreshAccessToken } from './gmail-client';
 
@@ -30,10 +32,9 @@ export async function processNewEmails(
     maxEmails = 50,
     sinceHours = 24,
     markAsProcessed = true,
-    useTrustAI = false
   } = options;
 
-  console.log('[EmailProcessor] Starting with options:', { maxEmails, sinceHours, markAsProcessed, useTrustAI });
+  console.log('[EmailProcessor] Starting with options:', { maxEmails, sinceHours, markAsProcessed });
 
   const result: ProcessingBatchResult = {
     processed: 0,
@@ -77,17 +78,28 @@ export async function processNewEmails(
       console.log('[EmailProcessor] Refreshing expired token...');
       const clientId = process.env.GOOGLE_CLIENT_ID!;
       const clientSecret = process.env.GOOGLE_CLIENT_SECRET!;
-      const refreshed = await refreshAccessToken(integration.refreshToken!, clientId, clientSecret);
-      if (refreshed) {
-        accessToken = refreshed.accessToken;
-        await prisma.userIntegration.update({
-          where: { id: integration.id },
-          data: {
-            accessToken: refreshed.accessToken,
-            tokenExpiresAt: refreshed.expiresAt
+      if (integration.refreshToken && clientId && clientSecret) {
+        try {
+          const refreshed = await refreshAccessToken(integration.refreshToken, clientId, clientSecret);
+          if (refreshed) {
+            accessToken = refreshed.accessToken;
+            await prisma.userIntegration.update({
+              where: { id: integration.id },
+              data: {
+                accessToken: refreshed.accessToken,
+                tokenExpiresAt: refreshed.expiresAt
+              }
+            });
           }
-        });
+        } catch (refreshError) {
+          console.error('[EmailProcessor] Token refresh failed:', refreshError);
+        }
       }
+    }
+
+    if (!accessToken) {
+      console.log('[EmailProcessor] No access token available');
+      return result;
     }
 
     // Calculate since date
@@ -97,7 +109,7 @@ export async function processNewEmails(
     console.log('[EmailProcessor] Fetching emails since:', sinceDate.toISOString());
 
     // Fetch emails from Gmail
-    const emails = await fetchGmailEmails(accessToken!, {
+    const emails = await fetchGmailEmails(accessToken, {
       maxResults: maxEmails,
       after: sinceDate,
       labelIds: ['INBOX']
@@ -186,8 +198,8 @@ export async function processNewEmails(
           }
         }
 
-        // Create safe rule results for storage
-        const safeRuleResults = ruleResults.map(r => ({
+        // Create properly typed rule results
+        const typedRuleResults: RuleExecutionResult[] = ruleResults.map(r => ({
           ruleId: r.ruleId || '',
           ruleName: r.ruleName || '',
           triggered: Boolean(r.triggered),
@@ -200,15 +212,33 @@ export async function processNewEmails(
             orderId: r.result.orderId || null,
             shopName: r.result.shopName || null,
             vendor: r.result.vendor || null
-          } : null,
-          error: r.error || null
+          } : undefined,
+          error: r.error || undefined,
+          timestamp: new Date()
         }));
 
-        // Record as processed (using existing schema fields)
+        // Create properly typed classification
+        const typedClassification: EmailClassification = {
+          category: classification.category,
+          confidence: classification.confidence,
+          extractedData: classification.extractedData || {},
+          reasoning: classification.reasoning || ''
+        };
+
+        // Create properly typed processed email
+        const processedEmail: ProcessedEmail = {
+          id: email.id,
+          emailId: email.id,
+          classification: typedClassification,
+          rulesExecuted: typedRuleResults,
+          processedAt: new Date()
+        };
+
+        // Record as processed in database (using existing schema fields)
         if (markAsProcessed) {
           await prisma.processedEmail.create({
             data: {
-              externalId: email.id,  // Gmail message ID
+              externalId: email.id,
               userId,
               provider: 'google',
               category: classification.category,
@@ -220,25 +250,20 @@ export async function processNewEmails(
               },
               processedData: {
                 reasoning: classification.reasoning || '',
-                rulesExecuted: safeRuleResults
+                rulesExecuted: typedRuleResults.map(r => ({
+                  ruleId: r.ruleId,
+                  ruleName: r.ruleName,
+                  triggered: r.triggered,
+                  actionExecuted: r.actionExecuted,
+                  result: r.result,
+                  error: r.error
+                }))
               }
             }
           });
         }
 
-        result.results.push({
-          id: email.id,
-          emailId: email.id,
-          classification: {
-            category: classification.category,
-            confidence: classification.confidence,
-            reasoning: classification.reasoning || '',
-            extractedData: classification.extractedData || {}
-          },
-          rulesExecuted: safeRuleResults,
-          processedAt: new Date()
-        });
-
+        result.results.push(processedEmail);
         result.success++;
 
       } catch (emailError: any) {
@@ -247,7 +272,12 @@ export async function processNewEmails(
       }
     }
 
-    console.log('[EmailProcessor] Completed:', result);
+    console.log('[EmailProcessor] Completed:', {
+      processed: result.processed,
+      success: result.success,
+      errors: result.errors,
+      skipped: result.skipped
+    });
 
   } catch (error: any) {
     console.error('[EmailProcessor] Fatal error:', error?.message || error);
@@ -313,14 +343,14 @@ export async function testEmailProcessing(
       return trigger?.category === classification.category;
     });
 
-    result.results.push({
+    const processedEmail: ProcessedEmail = {
       id: email.id,
       emailId: email.id,
       classification: {
         category: classification.category,
         confidence: classification.confidence,
-        reasoning: classification.reasoning || '',
-            extractedData: classification.extractedData || {}
+        extractedData: classification.extractedData || {},
+        reasoning: classification.reasoning || ''
       },
       rulesExecuted: matchingRules.map(r => ({
         ruleId: r.id,
@@ -330,8 +360,9 @@ export async function testEmailProcessing(
         timestamp: new Date()
       })),
       processedAt: new Date()
-    });
+    };
 
+    result.results.push(processedEmail);
     result.success++;
   }
 
