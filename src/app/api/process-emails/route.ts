@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       processed: result.processed,
-      success: result.success,
+      successCount: result.success,
       errors: result.errors,
       skipped: result.skipped,
       createdRecords: result.createdRecords,
