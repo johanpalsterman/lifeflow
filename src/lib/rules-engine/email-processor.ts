@@ -1,5 +1,6 @@
 // src/lib/rules-engine/email-processor.ts
-// Main email processing orchestrator - FIXED VERSION v2
+// Main email processing orchestrator - FIXED VERSION v3
+// Compatible with existing ProcessedEmail schema
 
 import prisma from '../prisma';
 import {
@@ -11,51 +12,6 @@ import { anonymizeEmail, isOrderEmail, isShipmentEmail } from './email-anonymize
 import { classifyEmailWithTrustAI, classifyEmailLocally } from './trustai-client';
 import { executeMatchingRules } from './rule-executor';
 import { fetchGmailEmails, refreshAccessToken } from './gmail-client';
-
-// ===========================================
-// HELPER: Safe JSON stringify (prevents circular reference errors)
-// ===========================================
-
-function safeStringify(obj: any, maxDepth: number = 3): string {
-  const seen = new WeakSet();
-  let depth = 0;
-  
-  return JSON.stringify(obj, (key, value) => {
-    // Skip internal Prisma properties
-    if (key.startsWith('$') || key === '_' || key === 'prisma') {
-      return undefined;
-    }
-    
-    // Skip functions
-    if (typeof value === 'function') {
-      return undefined;
-    }
-    
-    // Handle Date objects
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-    
-    // Handle circular references and max depth
-    if (typeof value === 'object' && value !== null) {
-      if (seen.has(value)) {
-        return '[Circular]';
-      }
-      seen.add(value);
-    }
-    
-    return value;
-  });
-}
-
-function serializeForStorage(obj: any): any {
-  try {
-    return JSON.parse(safeStringify(obj));
-  } catch (e) {
-    console.error('Serialization error:', e);
-    return { error: 'Could not serialize', timestamp: new Date().toISOString() };
-  }
-}
 
 // ===========================================
 // MAIN PROCESSING FUNCTION
@@ -74,7 +30,7 @@ export async function processNewEmails(
     maxEmails = 50,
     sinceHours = 24,
     markAsProcessed = true,
-    useTrustAI = false // Default to local classification to avoid external API issues
+    useTrustAI = false
   } = options;
 
   console.log('[EmailProcessor] Starting with options:', { maxEmails, sinceHours, markAsProcessed, useTrustAI });
@@ -152,7 +108,7 @@ export async function processNewEmails(
 
     console.log('[EmailProcessor] Fetched', emails.length, 'emails');
 
-    // Get user's active rules (only select needed fields to avoid circular refs)
+    // Get user's active rules
     const rules = await prisma.aIRule.findMany({
       where: { userId, isActive: true },
       select: {
@@ -172,9 +128,9 @@ export async function processNewEmails(
       result.processed++;
 
       try {
-        // Check if already processed
+        // Check if already processed (using externalId field)
         const alreadyProcessed = await prisma.processedEmail.findFirst({
-          where: { emailId: email.id, userId },
+          where: { externalId: email.id, userId },
           select: { id: true }
         });
 
@@ -203,7 +159,6 @@ export async function processNewEmails(
             reasoning: 'Detected as shipment notification email'
           };
         } else {
-          // Use local classification (faster and no external dependencies)
           classification = classifyEmailLocally(anonymized);
         }
 
@@ -217,7 +172,7 @@ export async function processNewEmails(
           userId
         );
 
-        // Count created records (safely access properties)
+        // Count created records
         for (const ruleResult of ruleResults) {
           if (ruleResult.actionExecuted && ruleResult.result) {
             const res = ruleResult.result;
@@ -229,13 +184,7 @@ export async function processNewEmails(
           }
         }
 
-        // Create safe objects for storage (no circular references)
-        const safeClassification = {
-          category: classification.category,
-          confidence: classification.confidence,
-          reasoning: classification.reasoning || ''
-        };
-
+        // Create safe rule results for storage
         const safeRuleResults = ruleResults.map(r => ({
           ruleId: r.ruleId || '',
           ruleName: r.ruleName || '',
@@ -253,15 +202,24 @@ export async function processNewEmails(
           error: r.error || null
         }));
 
-        // Record as processed
+        // Record as processed (using existing schema fields)
         if (markAsProcessed) {
           await prisma.processedEmail.create({
             data: {
+              externalId: email.id,  // Gmail message ID
               userId,
-              emailId: email.id,
-              classification: safeClassification,
-              rulesExecuted: safeRuleResults,
-              processedAt: new Date()
+              provider: 'google',
+              category: classification.category,
+              confidence: classification.confidence,
+              rawData: {
+                subject: email.subject,
+                from: email.from,
+                date: email.date
+              },
+              processedData: {
+                reasoning: classification.reasoning || '',
+                rulesExecuted: safeRuleResults
+              }
             }
           });
         }
@@ -269,7 +227,11 @@ export async function processNewEmails(
         result.results.push({
           id: email.id,
           emailId: email.id,
-          classification: safeClassification,
+          classification: {
+            category: classification.category,
+            confidence: classification.confidence,
+            reasoning: classification.reasoning || ''
+          },
           rulesExecuted: safeRuleResults,
           processedAt: new Date()
         });
@@ -382,7 +344,7 @@ export async function getProcessingStats(userId: string) {
     prisma.processedEmail.count({
       where: {
         userId,
-        processedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
       }
     }),
     prisma.order.groupBy({
